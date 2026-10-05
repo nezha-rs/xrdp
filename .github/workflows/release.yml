@@ -1,0 +1,47 @@
+name: Build Debian 13 xrdp assets
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and argument checks
+        run: bash tests/check.sh
+      - name: Build in Debian 13
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD:/workspace:ro" -v "$PWD/dist:/out" debian:13 \
+            bash /workspace/scripts/build-prebuilt.sh /out
+      - name: Check installation in clean runtime container
+        run: |
+          docker run --rm -v "$PWD:/workspace:ro" debian:13 \
+            bash /workspace/tests/runtime-smoke.sh /workspace/dist
+      - name: Include installer and documentation
+        run: |
+          cp install-debian13-gnome-rdp-codex.sh README.md RELEASE.md dist/
+          cd dist
+          sha256sum install-debian13-gnome-rdp-codex.sh README.md RELEASE.md >> SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian13-xrdp-release
+          path: dist/
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG — Debian 13 amd64" \
+              --notes-file RELEASE.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/*
